@@ -1,0 +1,23 @@
+{
+  "code": "69d083538c4dbc5c423b3fcee0553f2c",
+  "auto_farm": true,
+  "auto_friend_steal": true,
+  "auto_friend_help": true,
+  "auto_friend_bad": false,
+  "auto_task": true,
+  "auto_mall_free": true,
+  "auto_mall_buy": true,
+  "auto_email": true,
+  "auto_share": true,
+  "auto_month_card": true,
+  "auto_vip": true,
+  "auto_open_server": true,
+  "friend_quiet_hours": {
+    "enabled": true,
+    "start": "00:00",
+    "end": "07:00"
+  },
+  "friend_blacklist": [],
+  "seed_strategy": "max_profit",
+  "preferred_seed_id": 0
+}
