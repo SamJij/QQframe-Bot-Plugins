@@ -3,6 +3,8 @@
 QQFrame Bot 是一个为 QQ 农场（微信同玩版）量身打造的全自动挂机机器人。
 通过采用现代化的 **事件驱动 (Event-Driven)** 和 **插件化 (Plugin-based)** 架构，项目拥有极高的稳定性、扩展性和极低的耦合度。它支持多账号并发，支持在不掉线的情况下进行核心代码的 **热重载 (Hot Reloading)**。
 
+此项目是为了开发个人插件提供思路，如小白请去P佬与群友维护的[qq-farm-bot-ui](https://github.com/Penty-d/qq-farm-bot-ui)，本项目实现代码都是来源此库
+
 ---
 
 ## 🌟 核心特性
@@ -51,11 +53,13 @@ qqframe-bot/
 ## 🚀 快速开始
 
 ### 1. 安装依赖
+
 ```bash
 npm install
 ```
 
 ### 2. 配置账号并启动
+
 打开 `src/index.js`，修改你的真实抓包 `code`：
 
 ```javascript
@@ -73,9 +77,11 @@ const engine = new BotEngine({
 ```
 
 然后运行：
+
 ```bash
 node src/index.js
 ```
+
 启动成功后，管理面板 API 默认监听在 `http://localhost:8888`。
 
 ---
@@ -85,6 +91,7 @@ node src/index.js
 本项目的核心亮点之一是支持在 **不中断底层长连接、不重新执行登录握手** 的情况下，替换业务逻辑代码。
 
 ### 为什么能做到？
+
 当修改代码后再次 `require`，Node.js 默认会返回内存中缓存的旧代码。因此，要实现无感热重载，必须打破这层缓存，并在宿主引擎的生命周期中进行“外科手术”般的替换。
 
 ### 原理与核心代码解析
@@ -92,21 +99,26 @@ node src/index.js
 核心实现在 `src/core/plugin-manager.js` 的 `reload()` 方法中：
 
 **1. 优雅卸载旧实例 (Graceful Teardown)**
+
 ```javascript
 // 触发旧实例的 onDisable 生命周期
 if (wasEnabled) this.disable(pluginName);
 ```
+
 得益于 `BasePlugin` 设计的沙箱机制，这行代码不仅调用了业务的卸载逻辑，还会自动触发 **清空通过该插件创建的所有 `setInterval`** 和 **解绑其在 `EventBus` 上挂载的所有监听器**。这彻底杜绝了旧代码在后台变成“幽灵线程”导致双倍发包或内存泄漏的风险。
 
 **2. 暴力抹除内存缓存 (Cache Busting)**
+
 ```javascript
 const absolutePath = require.resolve(pluginPath);
 delete require.cache[absolutePath]; // 从 Node 缓存中抹除文件
 this.plugins.delete(pluginName);    // 从插件字典中移除旧实例
 ```
+
 这就是 Node.js 热重载的核心。删除 `require.cache` 里的 Key，强制下次读取时去硬盘加载最新的文件。
 
 **3. 重新装载与无缝衔接 (Reload & Resume)**
+
 ```javascript
 const newModule = require(absolutePath); // 重新读取最新保存的代码
 const NewPluginClass = Object.values(newModule).find(val => typeof val === 'function' && val.prototype);
@@ -116,10 +128,12 @@ if (wasEnabled) {
     this.enable(NewPluginClass.name); // 重新实例化并触发 onEnable
 }
 ```
+
 当新的插件实例调用 `onEnable()` 时，它会重新订阅 `EventBus` 的事件。
 由于底层的 `NetworkCore` (`src/core/network.js`) 是独立挂载在 `BotEngine` 上的，它并没有被重载，所以 **WebSocket 依然存活，Token 依然有效**。新插件起来后，立刻无缝接管下一个从服务器推过来的 `LandsNotify` 或者是下一个自己发起的轮询定时器。
 
 ### 如何使用？
+
 在保持 Bot 运行的情况下，修改并保存了插件代码。直接向管理服务器发送 POST 请求：
 
 ```bash
@@ -127,6 +141,7 @@ curl -X POST http://localhost:8888/api/accounts/acc_001/reload \
 -H "Content-Type: application/json" \
 -d '{"pluginPath": "../plugins/gameplay/farm-plugin"}'
 ```
+
 即可享受丝滑的热重载体验！
 
 ---
@@ -160,4 +175,5 @@ class DogPlugin extends BasePlugin {
 }
 module.exports = { DogPlugin };
 ```
+
 然后在 `index.js` 中 `engine.pluginManager.register(DogPlugin)` 即可完美融合进系统！
