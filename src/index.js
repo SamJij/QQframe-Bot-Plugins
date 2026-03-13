@@ -13,7 +13,7 @@ const { CONFIG } = require('./config/config');
 function registerDefaultPlugins(engine) {
     engine.pluginManager.register(FarmPlugin);
     engine.pluginManager.register(WarehousePlugin);
-    engine.pluginManager.register(FriendPlugin);
+    // engine.pluginManager.register(FriendPlugin);
     engine.pluginManager.register(TaskPlugin);
     engine.pluginManager.register(MallPlugin);
     engine.pluginManager.register(WelfarePlugin);

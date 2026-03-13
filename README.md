@@ -173,3 +173,17 @@ module.exports = { DogPlugin };
 ```
 
 然后在 `index.js` 中 `engine.pluginManager.register(DogPlugin)` 即可完美融合进系统！
+
+---
+
+## 📌 待办
+
+1. web 页面编写。
+2. 好友功能修复。
+3. 管理规范化。
+
+---
+
+## ⚠️ 免责声明
+
+本项目仅供学习与研究用途。使用本工具可能违反游戏服务条款，由此产生的一切后果由使用者自行承担。
