@@ -1,7 +1,7 @@
 const { BasePlugin } = require('../base-plugin');
 const { types } = require('../../utils/proto');
 const { toNum, sleep } = require('../../utils/utils');
-const { getPlantByFruitId, getFruitName, getItemById } = require('../../config/gameConfig');
+const { getPlantByFruitId, getFruitName, getItemById, getPlantBySeedId, getPlantNameBySeedId } = require('../../config/gameConfig');
 
 /**
  * 仓库自动化插件 (Warehouse Auto Plugin)
@@ -46,23 +46,57 @@ class WarehousePlugin extends BasePlugin {
 
     onDisable() {
         this.logger.info('WarehousePlugin', '仓库自动化模块已停止');
+        super.onDisable();
     }
 
     // ==========================================
     // 自动卖出核心逻辑
     // ==========================================
 
+    async fetchBagItems() {
+        const body = types.BagRequest.encode(types.BagRequest.create({})).finish();
+        const { body: replyBody } = await this.engine.network.sendMsgAsync('gamepb.itempb.ItemService', 'Bag', body);
+        const bagReply = types.BagReply.decode(replyBody);
+        return (bagReply.item_bag && bagReply.item_bag.items) ? bagReply.item_bag.items : (bagReply.items || []);
+    }
+
+    async getBagSnapshot() {
+        const items = await this.fetchBagItems();
+        return items.map((item) => {
+            const id = toNum(item.id);
+            const count = toNum(item.count);
+            const plantByFruit = getPlantByFruitId(id);
+            const seedPlant = getPlantBySeedId(id);
+            const info = getItemById(id);
+            const name = plantByFruit
+                ? getFruitName(id)
+                : (seedPlant ? getPlantNameBySeedId(id) : (info && info.name ? String(info.name) : `物品${id}`));
+            return {
+                id,
+                count,
+                name,
+                itemType: toNum(info && info.type),
+                isFruit: !!plantByFruit,
+                isSeed: !!seedPlant,
+            };
+        });
+    }
+
+    async getBagSeeds() {
+        const all = await this.getBagSnapshot();
+        return all.filter((x) => x.isSeed && x.count > 0);
+    }
+
     async sellAllFruits() {
-        if (this.isSelling) return;
+        if (this.isSelling) {
+            this.logger.info('WarehousePlugin', '自动出售跳过：上一次出售仍在进行');
+            return;
+        }
         this.isSelling = true;
 
         try {
             // 1. 获取背包物品
-            const body = types.BagRequest.encode(types.BagRequest.create({})).finish();
-            const { body: replyBody } = await this.engine.network.sendMsgAsync('gamepb.itempb.ItemService', 'Bag', body);
-            const bagReply = types.BagReply.decode(replyBody);
-
-            const items = (bagReply.item_bag && bagReply.item_bag.items) ? bagReply.item_bag.items : (bagReply.items || []);
+            const items = await this.fetchBagItems();
             
             // 2. 筛选出属于果实的物品且数量大于0
             const toSell = [];
@@ -134,10 +168,7 @@ class WarehousePlugin extends BasePlugin {
 
     async autoOpenFertilizerPacks() {
         try {
-            const body = types.BagRequest.encode(types.BagRequest.create({})).finish();
-            const { body: replyBody } = await this.engine.network.sendMsgAsync('gamepb.itempb.ItemService', 'Bag', body);
-            const bagReply = types.BagReply.decode(replyBody);
-            const items = (bagReply.item_bag && bagReply.item_bag.items) ? bagReply.item_bag.items : (bagReply.items || []);
+            const items = await this.fetchBagItems();
 
             const payloads = [];
             let normalHours = 0;
@@ -176,10 +207,14 @@ class WarehousePlugin extends BasePlugin {
                 }
             }
 
-            if (payloads.length === 0) return;
+            if (payloads.length === 0) {
+                this.logger.info('WarehousePlugin', '自动补充化肥跳过：背包中无可使用化肥道具');
+                return;
+            }
 
             // 为了安全起见，一次不要用太多，如果接近 990h 就不再自动使用
             if (normalHours >= this.FERTILIZER_CONTAINER_LIMIT_HOURS && organicHours >= this.FERTILIZER_CONTAINER_LIMIT_HOURS) {
+                this.logger.info('WarehousePlugin', `自动补充化肥跳过：容器接近上限(普通=${normalHours.toFixed(1)}h, 有机=${organicHours.toFixed(1)}h)`);
                 return;
             }
 

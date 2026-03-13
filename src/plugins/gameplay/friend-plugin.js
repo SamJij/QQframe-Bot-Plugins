@@ -18,18 +18,26 @@ class FriendPlugin extends BasePlugin {
         this.operationLimits = new Map();
         this.canGetHelpExp = true;
         this.helpAutoDisabledByLimit = false;
+        this.limitStateDateKey = '';
 
         // 本地黑名单 (原项目放在 store 里，这里简单作为内部状态)
         this.blacklist = new Set();
+        this.lastQuietHoursWarnAt = 0;
     }
 
     onLoad() {}
 
     onEnable() {
         this.logger.info('FriendPlugin', '好友自动化模块已启动');
+        this.reloadBlacklistFromConfig(this.engine.state.config, true);
 
         this.on('login_success', () => {
             this.scheduler.setTimeout(() => this.startCheckLoop(), 5000);
+        });
+
+        // 配置更新后实时刷新黑名单
+        this.on('config_updated', (cfg) => {
+            this.reloadBlacklistFromConfig(cfg, false);
         });
 
         // 监听服务器下发的每日操作限制更新
@@ -41,6 +49,7 @@ class FriendPlugin extends BasePlugin {
     onDisable() {
         this.logger.info('FriendPlugin', '好友自动化模块已停止');
         this.isChecking = false;
+        super.onDisable();
     }
 
     // ==========================================
@@ -56,9 +65,18 @@ class FriendPlugin extends BasePlugin {
     }
 
     async checkFriends() {
+        this.ensureDailyLimitState();
+
         // 先检查配置开关
         const config = this.engine.state.config;
         if (!config.auto_friend_steal && !config.auto_friend_help && !config.auto_friend_bad) {
+            this.logger.info('FriendPlugin', '好友巡查跳过：相关功能均未开启');
+            return;
+        }
+
+        // 安静时段内不执行好友相关操作
+        if (this.isInQuietHours(config.friend_quiet_hours)) {
+            this.logger.info('FriendPlugin', '好友巡查跳过：当前处于安静时段');
             return;
         }
 
@@ -68,6 +86,7 @@ class FriendPlugin extends BasePlugin {
         try {
             // 1. 获取好友列表
             const friendsReply = await this.getAllFriends();
+            this.updateOperationLimits(friendsReply && friendsReply.operation_limits);
             const friends = friendsReply.game_friends || [];
             
             if (friends.length === 0) return;
@@ -93,9 +112,10 @@ class FriendPlugin extends BasePlugin {
                 const insectNum = toNum(p.insect_num);
 
                 const hasSteal = config.auto_friend_steal && stealNum > 0;
-                const hasHelp = config.auto_friend_help && (dryNum > 0 || weedNum > 0 || insectNum > 0);
+                const hasHelp = config.auto_friend_help && this.canGetHelpExp && (dryNum > 0 || weedNum > 0 || insectNum > 0);
+                const hasBad = config.auto_friend_bad && (dryNum > 0 || weedNum > 0 || insectNum > 0 || stealNum > 0);
                 
-                if (hasSteal || hasHelp) {
+                if (hasSteal || hasHelp || hasBad) {
                     priorityFriends.push({
                         gid, name, stealNum, dryNum, weedNum, insectNum
                     });
@@ -151,6 +171,70 @@ class FriendPlugin extends BasePlugin {
         }
     }
 
+    parseHHmmToMinute(text) {
+        const raw = String(text || '').trim();
+        const m = raw.match(/^(\d{1,2}):(\d{1,2})$/);
+        if (!m) return -1;
+        const hh = Number.parseInt(m[1], 10);
+        const mm = Number.parseInt(m[2], 10);
+        if (!Number.isFinite(hh) || !Number.isFinite(mm)) return -1;
+        if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return -1;
+        return hh * 60 + mm;
+    }
+
+    getDateKey() {
+        const nowSec = getServerTimeSec();
+        const nowMs = nowSec > 0 ? nowSec * 1000 : Date.now();
+        const bjDate = new Date(nowMs + 8 * 3600 * 1000);
+        return `${bjDate.getUTCFullYear()}-${String(bjDate.getUTCMonth() + 1).padStart(2, '0')}-${String(bjDate.getUTCDate()).padStart(2, '0')}`;
+    }
+
+    ensureDailyLimitState() {
+        const today = this.getDateKey();
+        if (this.limitStateDateKey === today) return;
+        this.limitStateDateKey = today;
+        this.operationLimits.clear();
+        this.canGetHelpExp = true;
+        this.helpAutoDisabledByLimit = false;
+    }
+
+    getServerMinuteOfDay() {
+        const nowSec = getServerTimeSec();
+        const nowMs = nowSec > 0 ? nowSec * 1000 : Date.now();
+        const bjDate = new Date(nowMs + 8 * 3600 * 1000);
+        return bjDate.getUTCHours() * 60 + bjDate.getUTCMinutes();
+    }
+
+    isInQuietHours(quietCfg) {
+        const cfg = quietCfg && typeof quietCfg === 'object' ? quietCfg : {};
+        if (!cfg.enabled) return false;
+
+        const start = this.parseHHmmToMinute(cfg.start);
+        const end = this.parseHHmmToMinute(cfg.end);
+        if (start < 0 || end < 0) {
+            const now = Date.now();
+            // 配置异常时每 10 分钟最多告警一次，避免刷屏。
+            if (now - this.lastQuietHoursWarnAt > 10 * 60 * 1000) {
+                this.lastQuietHoursWarnAt = now;
+                this.logger.warn('FriendPlugin', `friend_quiet_hours 配置无效，已忽略: start=${cfg.start}, end=${cfg.end}`);
+            }
+            return false;
+        }
+
+        const nowMinute = this.getServerMinuteOfDay();
+        if (start === end) {
+            // start=end 视为全天安静。
+            return true;
+        }
+
+        if (start < end) {
+            // 同日时段，如 01:00-07:00
+            return nowMinute >= start && nowMinute < end;
+        }
+        // 跨天时段，如 23:00-07:00
+        return nowMinute >= start || nowMinute < end;
+    }
+
     async visitFriend(friend, totalActions, config) {
         const { gid, name } = friend;
         let actions = [];
@@ -171,36 +255,82 @@ class FriendPlugin extends BasePlugin {
             // 1. 偷菜
             if (config.auto_friend_steal && status.stealable.length > 0) {
                 try {
-                    await this.stealHarvest(gid, status.stealable);
-                    actions.push(`偷${status.stealable.length}`);
-                    totalActions.steal += status.stealable.length;
+                    const canSteal = await this.precheckCanOperate(gid, 10004);
+                    if (canSteal) {
+                        await this.stealHarvest(gid, status.stealable);
+                        actions.push(`偷${status.stealable.length}`);
+                        totalActions.steal += status.stealable.length;
+                    } else {
+                        this.logger.info('好友', `${name}: 偷菜跳过（今日次数不足或服务端限制）`);
+                    }
                 } catch (e) {
-                    // 单次偷菜失败可忽略
+                    this.logger.warn('好友', `${name}: 偷菜失败: ${e.message}`);
                 }
             }
 
             // 2. 帮忙
-            if (config.auto_friend_help) {
+            if (config.auto_friend_help && this.canGetHelpExp) {
                 if (status.needWeed.length > 0) {
                     try {
-                        await this.helpWeed(gid, status.needWeed);
-                        actions.push(`草${status.needWeed.length}`);
-                        totalActions.helpWeed += status.needWeed.length;
-                    } catch(e) {}
+                        const canHelpWeed = await this.precheckCanOperate(gid, 10003);
+                        if (canHelpWeed) {
+                            await this.helpWeed(gid, status.needWeed);
+                            actions.push(`草${status.needWeed.length}`);
+                            totalActions.helpWeed += status.needWeed.length;
+                        }
+                    } catch (e) {
+                        this.logger.warn('好友', `${name}: 帮忙除草失败: ${e.message}`);
+                    }
                 }
                 if (status.needBug.length > 0) {
                     try {
-                        await this.helpInsecticide(gid, status.needBug);
-                        actions.push(`虫${status.needBug.length}`);
-                        totalActions.helpBug += status.needBug.length;
-                    } catch(e) {}
+                        const canHelpBug = await this.precheckCanOperate(gid, 10002);
+                        if (canHelpBug) {
+                            await this.helpInsecticide(gid, status.needBug);
+                            actions.push(`虫${status.needBug.length}`);
+                            totalActions.helpBug += status.needBug.length;
+                        }
+                    } catch (e) {
+                        this.logger.warn('好友', `${name}: 帮忙除虫失败: ${e.message}`);
+                    }
                 }
                 if (status.needWater.length > 0) {
                     try {
-                        await this.helpWater(gid, status.needWater);
-                        actions.push(`水${status.needWater.length}`);
-                        totalActions.helpWater += status.needWater.length;
-                    } catch(e) {}
+                        const canHelpWater = await this.precheckCanOperate(gid, 10001);
+                        if (canHelpWater) {
+                            await this.helpWater(gid, status.needWater);
+                            actions.push(`水${status.needWater.length}`);
+                            totalActions.helpWater += status.needWater.length;
+                        }
+                    } catch (e) {
+                        this.logger.warn('好友', `${name}: 帮忙浇水失败: ${e.message}`);
+                    }
+                }
+            }
+            if (config.auto_friend_help && !this.canGetHelpExp) {
+                this.logger.info('好友', `${name}: 帮忙跳过（今日帮忙经验已达上限）`);
+            }
+
+            // 3. 捣乱（放虫/放草）
+            if (config.auto_friend_bad && status.badTarget.length > 0) {
+                const targetLand = status.badTarget[0];
+                try {
+                    const canPutInsects = await this.precheckCanOperate(gid, 10005);
+                    if (canPutInsects) {
+                        await this.putInsects(gid, [targetLand]);
+                        actions.push('放虫1');
+                    }
+                } catch (e) {
+                    this.logger.warn('好友', `${name}: 放虫失败: ${e.message}`);
+                }
+                try {
+                    const canPutWeeds = await this.precheckCanOperate(gid, 10006);
+                    if (canPutWeeds) {
+                        await this.putWeeds(gid, [targetLand]);
+                        actions.push('放草1');
+                    }
+                } catch (e) {
+                    this.logger.warn('好友', `${name}: 放草失败: ${e.message}`);
                 }
             }
 
@@ -217,10 +347,42 @@ class FriendPlugin extends BasePlugin {
             const msg = String(e.message || '');
             if (msg.includes('1002003')) {
                 this.logger.warn('好友', `被拦截，已将 ${name}(${gid}) 加入防风控黑名单`);
-                this.blacklist.add(gid);
+                this.addToBlacklistAndPersist(gid);
             }
             return false;
         }
+    }
+
+    normalizeBlacklist(input) {
+        const source = Array.isArray(input) ? input : [];
+        const result = [];
+        const seen = new Set();
+        for (const x of source) {
+            const gid = toNum(x);
+            if (gid <= 0) continue;
+            if (seen.has(gid)) continue;
+            seen.add(gid);
+            result.push(gid);
+        }
+        return result;
+    }
+
+    reloadBlacklistFromConfig(cfg, fromInit = false) {
+        const nextList = this.normalizeBlacklist(cfg && cfg.friend_blacklist);
+        this.blacklist = new Set(nextList);
+        const src = fromInit ? '初始化' : '配置更新';
+        this.logger.info('FriendPlugin', `${src}黑名单完成，当前 ${nextList.length} 人`);
+    }
+
+    addToBlacklistAndPersist(gid) {
+        const target = toNum(gid);
+        if (target <= 0) return;
+        if (this.blacklist.has(target)) return;
+        this.blacklist.add(target);
+
+        const merged = this.normalizeBlacklist([...this.blacklist]);
+        this.engine.store.update({ friend_blacklist: merged });
+        this.logger.info('FriendPlugin', `黑名单已持久化，新增 GID=${target}，当前 ${merged.length} 人`);
     }
 
     // ==========================================
@@ -231,6 +393,152 @@ class FriendPlugin extends BasePlugin {
         const body = types.GetAllFriendsRequest.encode(types.GetAllFriendsRequest.create({})).finish();
         const { body: replyBody } = await this.engine.network.sendMsgAsync('gamepb.friendpb.FriendService', 'GetAll', body);
         return types.GetAllFriendsReply.decode(replyBody);
+    }
+
+    async getFriendsSummary() {
+        const reply = await this.getAllFriends();
+        const list = Array.isArray(reply && reply.game_friends) ? reply.game_friends : [];
+        return list.map((f) => {
+            const gid = toNum(f.gid);
+            const plant = f.plant || {};
+            return {
+                gid,
+                name: f.remark || f.name || `GID:${gid}`,
+                level: toNum(f.level),
+                stealPlantNum: toNum(plant.steal_plant_num),
+                dryNum: toNum(plant.dry_num),
+                weedNum: toNum(plant.weed_num),
+                insectNum: toNum(plant.insect_num),
+                inBlacklist: this.blacklist.has(gid),
+            };
+        });
+    }
+
+    summarizeLands(lands) {
+        const list = Array.isArray(lands) ? lands : [];
+        return list.map((land) => {
+            const id = toNum(land && land.id);
+            const unlocked = !!(land && land.unlocked);
+            const plant = land && land.plant ? land.plant : null;
+            const hasPlant = !!(plant && Array.isArray(plant.phases) && plant.phases.length > 0);
+            const stealable = !!(plant && plant.stealable);
+            const dryNum = toNum(plant && plant.dry_num);
+            const weedNum = Array.isArray(plant && plant.weed_owners) ? plant.weed_owners.length : 0;
+            const insectNum = Array.isArray(plant && plant.insect_owners) ? plant.insect_owners.length : 0;
+            return {
+                id,
+                unlocked,
+                hasPlant,
+                stealable,
+                dryNum,
+                weedNum,
+                insectNum,
+            };
+        });
+    }
+
+    async getFriendLands(friendGid) {
+        const gid = toNum(friendGid);
+        if (gid <= 0) throw new Error('无效好友GID');
+        const enterReply = await this.enterFriendFarm(gid);
+        const lands = Array.isArray(enterReply && enterReply.lands) ? enterReply.lands : [];
+        await this.leaveFriendFarm(gid);
+        return {
+            gid,
+            lands: this.summarizeLands(lands),
+        };
+    }
+
+    async doFriendOp(friendGid, op) {
+        const gid = toNum(friendGid);
+        const opType = String(op || '').trim().toLowerCase();
+        if (gid <= 0) throw new Error('无效好友GID');
+        if (!['steal', 'help', 'bad'].includes(opType)) {
+            throw new Error('不支持的好友操作类型');
+        }
+
+        const enterReply = await this.enterFriendFarm(gid);
+        const lands = Array.isArray(enterReply && enterReply.lands) ? enterReply.lands : [];
+        const status = this.analyzeFriendLands(lands, this.engine.state.user.gid);
+
+        const result = {
+            gid,
+            op: opType,
+            steal: 0,
+            helpWeed: 0,
+            helpBug: 0,
+            helpWater: 0,
+            badInsects: 0,
+            badWeeds: 0,
+        };
+
+        try {
+            if (opType === 'steal') {
+                if (status.stealable.length > 0) {
+                    const canSteal = await this.precheckCanOperate(gid, 10004);
+                    if (canSteal) {
+                        await this.stealHarvest(gid, status.stealable);
+                        result.steal = status.stealable.length;
+                    }
+                }
+            } else if (opType === 'help') {
+                if (status.needWeed.length > 0) {
+                    const canHelpWeed = await this.precheckCanOperate(gid, 10003);
+                    if (canHelpWeed) {
+                        await this.helpWeed(gid, status.needWeed);
+                        result.helpWeed = status.needWeed.length;
+                    }
+                }
+                if (status.needBug.length > 0) {
+                    const canHelpBug = await this.precheckCanOperate(gid, 10002);
+                    if (canHelpBug) {
+                        await this.helpInsecticide(gid, status.needBug);
+                        result.helpBug = status.needBug.length;
+                    }
+                }
+                if (status.needWater.length > 0) {
+                    const canHelpWater = await this.precheckCanOperate(gid, 10001);
+                    if (canHelpWater) {
+                        await this.helpWater(gid, status.needWater);
+                        result.helpWater = status.needWater.length;
+                    }
+                }
+            } else if (opType === 'bad') {
+                if (status.badTarget.length > 0) {
+                    const targetLand = status.badTarget[0];
+                    const canPutInsects = await this.precheckCanOperate(gid, 10005);
+                    if (canPutInsects) {
+                        await this.putInsects(gid, [targetLand]);
+                        result.badInsects = 1;
+                    }
+                    const canPutWeeds = await this.precheckCanOperate(gid, 10006);
+                    if (canPutWeeds) {
+                        await this.putWeeds(gid, [targetLand]);
+                        result.badWeeds = 1;
+                    }
+                }
+            }
+        } finally {
+            await this.leaveFriendFarm(gid);
+        }
+
+        return result;
+    }
+
+    async precheckCanOperate(friendGid, operationId) {
+        try {
+            if (!types.CheckCanOperateRequest || !types.CheckCanOperateReply) return true;
+            const body = types.CheckCanOperateRequest.encode(types.CheckCanOperateRequest.create({
+                host_gid: this.engine.network.toLong(friendGid),
+                operation_id: this.engine.network.toLong(operationId),
+            })).finish();
+            const { body: replyBody } = await this.engine.network.sendMsgAsync('gamepb.plantpb.PlantService', 'CheckCanOperate', body);
+            const reply = types.CheckCanOperateReply.decode(replyBody);
+            return !!(reply && reply.can_operate);
+        } catch {
+            // 预检查失败不阻断主流程，回退到直接请求。
+            return true;
+        }
     }
 
     async enterFriendFarm(friendGid) {
@@ -258,7 +566,9 @@ class FriendPlugin extends BasePlugin {
             is_all: true,
         })).finish();
         const { body: replyBody } = await this.engine.network.sendMsgAsync('gamepb.plantpb.PlantService', 'Harvest', body);
-        return types.HarvestReply.decode(replyBody);
+        const reply = types.HarvestReply.decode(replyBody);
+        this.updateOperationLimits(reply && reply.operation_limits);
+        return reply;
     }
 
     async helpWater(friendGid, landIds) {
@@ -266,7 +576,9 @@ class FriendPlugin extends BasePlugin {
             land_ids: landIds.map(id => this.engine.network.toLong(id)),
             host_gid: this.engine.network.toLong(friendGid),
         })).finish();
-        await this.engine.network.sendMsgAsync('gamepb.plantpb.PlantService', 'WaterLand', body);
+        const { body: replyBody } = await this.engine.network.sendMsgAsync('gamepb.plantpb.PlantService', 'WaterLand', body);
+        const reply = types.WaterLandReply.decode(replyBody);
+        this.updateOperationLimits(reply && reply.operation_limits);
     }
 
     async helpWeed(friendGid, landIds) {
@@ -274,7 +586,9 @@ class FriendPlugin extends BasePlugin {
             land_ids: landIds.map(id => this.engine.network.toLong(id)),
             host_gid: this.engine.network.toLong(friendGid),
         })).finish();
-        await this.engine.network.sendMsgAsync('gamepb.plantpb.PlantService', 'WeedOut', body);
+        const { body: replyBody } = await this.engine.network.sendMsgAsync('gamepb.plantpb.PlantService', 'WeedOut', body);
+        const reply = types.WeedOutReply.decode(replyBody);
+        this.updateOperationLimits(reply && reply.operation_limits);
     }
 
     async helpInsecticide(friendGid, landIds) {
@@ -282,7 +596,81 @@ class FriendPlugin extends BasePlugin {
             land_ids: landIds.map(id => this.engine.network.toLong(id)),
             host_gid: this.engine.network.toLong(friendGid),
         })).finish();
-        await this.engine.network.sendMsgAsync('gamepb.plantpb.PlantService', 'Insecticide', body);
+        const { body: replyBody } = await this.engine.network.sendMsgAsync('gamepb.plantpb.PlantService', 'Insecticide', body);
+        const reply = types.InsecticideReply.decode(replyBody);
+        this.updateOperationLimits(reply && reply.operation_limits);
+    }
+
+    async putInsects(friendGid, landIds) {
+        const body = types.PutInsectsRequest.encode(types.PutInsectsRequest.create({
+            host_gid: this.engine.network.toLong(friendGid),
+            land_ids: landIds.map(id => this.engine.network.toLong(id)),
+        })).finish();
+        const { body: replyBody } = await this.engine.network.sendMsgAsync('gamepb.plantpb.PlantService', 'PutInsects', body);
+        const reply = types.PutInsectsReply.decode(replyBody);
+        this.updateOperationLimits(reply && reply.operation_limits);
+    }
+
+    async putWeeds(friendGid, landIds) {
+        const body = types.PutWeedsRequest.encode(types.PutWeedsRequest.create({
+            host_gid: this.engine.network.toLong(friendGid),
+            land_ids: landIds.map(id => this.engine.network.toLong(id)),
+        })).finish();
+        const { body: replyBody } = await this.engine.network.sendMsgAsync('gamepb.plantpb.PlantService', 'PutWeeds', body);
+        const reply = types.PutWeedsReply.decode(replyBody);
+        this.updateOperationLimits(reply && reply.operation_limits);
+    }
+
+    updateOperationLimits(limits) {
+        const list = Array.isArray(limits) ? limits : [];
+        for (const row of list) {
+            const id = toNum(row && row.id);
+            if (id <= 0) continue;
+            this.operationLimits.set(id, {
+                dayTimes: toNum(row && row.day_times),
+                dayTimesLt: toNum(row && row.day_times_lt),
+                dayExpTimes: toNum(row && row.day_exp_times),
+                dayExTimesLt: toNum(row && row.day_ex_times_lt),
+            });
+        }
+        this.refreshHelpExpLimit();
+    }
+
+    refreshHelpExpLimit() {
+        const helpIds = [10001, 10002, 10003];
+        let hasKnown = false;
+        let allLimited = true;
+
+        for (const id of helpIds) {
+            const row = this.operationLimits.get(id);
+            if (!row) {
+                allLimited = false;
+                continue;
+            }
+            const lt = toNum(row.dayExTimesLt);
+            const used = toNum(row.dayExpTimes);
+            if (lt <= 0) {
+                allLimited = false;
+                continue;
+            }
+            hasKnown = true;
+            if (used < lt) {
+                allLimited = false;
+            }
+        }
+
+        const nextCanHelp = !(hasKnown && allLimited);
+        if (this.canGetHelpExp !== nextCanHelp) {
+            this.canGetHelpExp = nextCanHelp;
+            if (!nextCanHelp && !this.helpAutoDisabledByLimit) {
+                this.helpAutoDisabledByLimit = true;
+                this.logger.info('好友', '检测到帮忙经验已达每日上限，今日自动帮忙将暂停');
+            }
+            if (nextCanHelp) {
+                this.helpAutoDisabledByLimit = false;
+                this.logger.info('好友', '帮忙经验上限状态已恢复，自动帮忙重新启用');
+            }
+        }
     }
 
     // ==========================================
@@ -292,6 +680,7 @@ class FriendPlugin extends BasePlugin {
     analyzeFriendLands(lands, myGid) {
         const result = {
             stealable: [], needWater: [], needWeed: [], needBug: [],
+            badTarget: [],
         };
         const nowSec = getServerTimeSec();
 
@@ -321,6 +710,9 @@ class FriendPlugin extends BasePlugin {
             }
 
             if (phaseVal === 5) continue; // DEAD
+
+            // 非成熟/非枯萎阶段可作为捣乱目标。
+            result.badTarget.push(id);
 
             // 帮忙操作
             if (toNum(plant.dry_num) > 0) result.needWater.push(id);

@@ -26,19 +26,68 @@ class StoreManager extends EventEmitter {
             auto_task: true,
             auto_mall_free: true,
             auto_mall_buy: true,
+            auto_mall_buy_type: 'organic', // organic | normal | both
+            auto_mall_buy_max: 10, // 每轮最多购买数量，范围 1-10
+            auto_mall_buy_mode: 'threshold', // threshold | unlimited
+            auto_mall_buy_threshold: 100, // threshold 模式下容器时长阈值（小时）
             auto_email: true,
             auto_share: true,
             auto_month_card: true,
             auto_vip: true,
             auto_open_server: true,
+            auto_land_upgrade: false,
+            auto_fertilize: false,
+            auto_fertilize_type: 'normal', // normal | organic | both
+            auto_offline_reminder: false,
+            offline_webhook_endpoint: '',
+            offline_webhook_token: '',
+            offline_reminder_title: '账号离线提醒',
+            offline_reminder_msg: '检测到账号离线，请尽快检查。',
+            offline_reminder_cooldown_sec: 300,
             friend_quiet_hours: { enabled: true, start: "00:00", end: "07:00" },
             friend_blacklist: [], // 防止风控自动拉黑的名单
+            friend_cache: [], // 好友缓存（用于扩展好友池）
             seed_strategy: "max_profit", // 选种策略: max_profit | max_level | preferred
             preferred_seed_id: 0,
         };
 
         this.ensureDir();
         this.load();
+    }
+
+    getSettingsWhitelist() {
+        return new Set([
+            'auto_farm',
+            'auto_friend_steal',
+            'auto_friend_help',
+            'auto_friend_bad',
+            'auto_task',
+            'auto_mall_free',
+            'auto_mall_buy',
+            'auto_mall_buy_type',
+            'auto_mall_buy_max',
+            'auto_mall_buy_mode',
+            'auto_mall_buy_threshold',
+            'auto_email',
+            'auto_share',
+            'auto_month_card',
+            'auto_vip',
+            'auto_open_server',
+            'auto_land_upgrade',
+            'auto_fertilize',
+            'auto_fertilize_type',
+            'auto_offline_reminder',
+            'offline_webhook_endpoint',
+            'offline_webhook_token',
+            'offline_reminder_title',
+            'offline_reminder_msg',
+            'offline_reminder_cooldown_sec',
+            'friend_quiet_hours',
+            'friend_blacklist',
+            'friend_cache',
+            'seed_strategy',
+            'preferred_seed_id',
+        ]);
     }
 
     ensureDir() {
@@ -90,6 +139,27 @@ class StoreManager extends EventEmitter {
     update(newConfig) {
         this.config = { ...this.config, ...newConfig };
         this.save();
+    }
+
+    getSettings() {
+        const whitelist = this.getSettingsWhitelist();
+        const out = {};
+        for (const key of whitelist) {
+            out[key] = this.config[key];
+        }
+        return out;
+    }
+
+    saveSettings(input) {
+        const payload = (input && typeof input === 'object') ? input : {};
+        const whitelist = this.getSettingsWhitelist();
+        const next = {};
+        for (const [k, v] of Object.entries(payload)) {
+            if (!whitelist.has(k)) continue;
+            next[k] = v;
+        }
+        this.update(next);
+        return this.getSettings();
     }
 
     /**

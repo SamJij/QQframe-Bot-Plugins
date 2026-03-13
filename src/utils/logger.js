@@ -168,8 +168,33 @@ function createModuleLogger(moduleName = 'app') {
     };
 }
 
+/**
+ * 统一运行时日志结构，避免下游处理纯字符串日志。
+ */
+function normalizeRuntimeLog(entry = {}, accountId = '') {
+    const raw = (entry && typeof entry === 'object') ? entry : {};
+    const level = String(raw.level || 'info').toLowerCase();
+    const tag = String(raw.tag || raw.module || '').trim();
+    const message = redactString(raw.message || raw.msg || '');
+    const event = String(raw.event || '').trim();
+    const extra = sanitizeMeta(raw.extra || raw.meta || {});
+    const time = Number(raw.time || raw.ts || Date.now());
+    return {
+        id: `${time}_${Math.random().toString(16).slice(2, 10)}`,
+        accountId: String(accountId || raw.accountId || '').trim(),
+        time,
+        level,
+        tag,
+        module: tag,
+        event,
+        message,
+        extra,
+    };
+}
+
 module.exports = {
     createModuleLogger,
     sanitizeMeta,
     redactString,
+    normalizeRuntimeLog,
 };

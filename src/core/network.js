@@ -27,7 +27,19 @@ class NetworkCore {
      */
     connect() {
         // 从配置中读取登录 Code，默认留空供测试
-        const code = this.engine.state.config.code || '';
+        const code = String(this.engine.state.config.code || '').trim();
+        if (!code) {
+            this.engine.logger.error(
+                'Network',
+                `未配置登录 code，请先填写 data/config_${this.engine.accountId}.json 中的 code 字段`
+            );
+            this.engine.eventBus.emit('network_disconnected', {
+                code: 0,
+                reason: 'missing_code',
+                at: Date.now(),
+            });
+            return;
+        }
         const url = `${CONFIG.serverUrl}?platform=${CONFIG.platform}&os=${CONFIG.os}&ver=${CONFIG.clientVersion}&code=${code}&openID=`;
 
         this.engine.logger.info('Network', '正在连接到腾讯农场服务器...');
@@ -54,10 +66,19 @@ class NetworkCore {
         this.ws.on('close', (code, reason) => {
             this.engine.logger.warn('Network', `WebSocket 连接关闭 (code=${code})`);
             this.cleanup('连接关闭');
-            this.engine.eventBus.emit('network_disconnected');
+            this.engine.eventBus.emit('network_disconnected', {
+                code: this.toNum(code),
+                reason: reason ? String(reason) : '',
+                at: Date.now(),
+            });
             
             // 自动重连逻辑 (延迟 5 秒)
             setTimeout(() => {
+                const latestCode = String(this.engine.state.config.code || '').trim();
+                if (!latestCode) {
+                    this.engine.logger.warn('Network', '跳过自动重连：code 为空');
+                    return;
+                }
                 this.engine.logger.info('Network', '尝试自动重连...');
                 this.connect();
             }, 5000);
@@ -187,6 +208,34 @@ class NetworkCore {
             const type = event.message_type || '';
             const eventBody = event.body;
 
+            // 同步点券状态（Item 1002），用于商城自动购买逻辑。
+            if (type.includes('ItemNotify') && types.ItemNotify) {
+                try {
+                    const notify = types.ItemNotify.decode(eventBody);
+                    const items = notify.items || [];
+                    for (const itemChg of items) {
+                        const item = itemChg && itemChg.item;
+                        if (!item) continue;
+
+                        const itemId = this.toNum(item.id);
+                        if (itemId !== 1002) continue;
+
+                        const count = this.toNum(item.count);
+                        const delta = this.toNum(itemChg.delta);
+                        if (count > 0) {
+                            this.engine.state.user.coupon = count;
+                            this.engine.state.user.couponKnown = true;
+                        } else if (delta !== 0) {
+                            const base = this.toNum(this.engine.state.user.coupon);
+                            this.engine.state.user.coupon = Math.max(0, base + delta);
+                            this.engine.state.user.couponKnown = true;
+                        }
+                    }
+                } catch {
+                    // 通知体异常时忽略，不影响后续事件分发。
+                }
+            }
+
             // 抛出特定的通知事件到 EventBus，由各插件订阅处理
             // 如: 'server_notify:LandsNotify'
             this.engine.eventBus.emit(`server_notify:${type}`, eventBody);
@@ -228,6 +277,8 @@ class NetworkCore {
                     level: this.toNum(reply.basic.level),
                     gold: this.toNum(reply.basic.gold),
                     exp: this.toNum(reply.basic.exp),
+                    coupon: this.toNum(this.engine.state.user.coupon),
+                    couponKnown: !!this.engine.state.user.couponKnown,
                 };
 
                 this.engine.logger.info('Network', `登录成功: ${this.engine.state.user.name} (Lv${this.engine.state.user.level})`);

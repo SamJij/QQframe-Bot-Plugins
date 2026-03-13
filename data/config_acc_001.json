@@ -1,5 +1,5 @@
 {
-  "code": "69d083538c4dbc5c423b3fcee0553f2c",
+  "code": "501d8603387282901c3f006054a68805",
   "auto_farm": true,
   "auto_friend_steal": true,
   "auto_friend_help": true,
@@ -7,17 +7,31 @@
   "auto_task": true,
   "auto_mall_free": true,
   "auto_mall_buy": true,
+  "auto_mall_buy_type": "organic",
+  "auto_mall_buy_max": 10,
+  "auto_mall_buy_mode": "threshold",
+  "auto_mall_buy_threshold": 100,
   "auto_email": true,
   "auto_share": true,
   "auto_month_card": true,
   "auto_vip": true,
   "auto_open_server": true,
+  "auto_land_upgrade": false,
+  "auto_fertilize": false,
+  "auto_fertilize_type": "normal",
+  "auto_offline_reminder": false,
+  "offline_webhook_endpoint": "",
+  "offline_webhook_token": "",
+  "offline_reminder_title": "账号离线提醒",
+  "offline_reminder_msg": "检测到账号离线，请尽快检查。",
+  "offline_reminder_cooldown_sec": 300,
   "friend_quiet_hours": {
     "enabled": true,
     "start": "00:00",
     "end": "07:00"
   },
   "friend_blacklist": [],
+  "friend_cache": [],
   "seed_strategy": "max_profit",
   "preferred_seed_id": 0
 }

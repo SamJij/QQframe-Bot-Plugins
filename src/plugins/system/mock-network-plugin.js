@@ -28,6 +28,7 @@ class MockNetworkPlugin extends BasePlugin {
     onDisable() {
         this.logger.info('MockNetwork', '模拟网络插件已停止');
         this.engine.network = null;
+        super.onDisable();
     }
 
     // ==========================================

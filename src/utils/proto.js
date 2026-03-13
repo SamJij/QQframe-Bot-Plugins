@@ -118,6 +118,8 @@ const typeMappings = [
     ['FriendAddedNotify', 'gamepb.friendpb.FriendAddedNotify'],
     ['InteractRecordsRequest', 'gamepb.interactpb.InteractRecordsRequest'],
     ['InteractRecordsReply', 'gamepb.interactpb.InteractRecordsReply'],
+    ['GetInteractRecordsRequest', 'gamepb.interactpb.InteractRecordsRequest'],
+    ['GetInteractRecordsReply', 'gamepb.interactpb.InteractRecordsReply'],
     // 访问
     ['VisitEnterRequest', 'gamepb.visitpb.EnterRequest'],
     ['VisitEnterReply', 'gamepb.visitpb.EnterReply'],

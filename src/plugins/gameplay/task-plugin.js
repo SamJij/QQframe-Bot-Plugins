@@ -59,6 +59,7 @@ class TaskPlugin extends BasePlugin {
     onDisable() {
         this.logger.info('TaskPlugin', '任务签到模块已停止');
         this.checking = false;
+        super.onDisable();
     }
 
     // ==========================================
@@ -85,9 +86,18 @@ class TaskPlugin extends BasePlugin {
     // ==========================================
 
     async checkAndClaimTasks(force = false) {
-        if (this.checking) return;
-        if (!this.engine.state.config.auto_task) return;
-        if (!force && !this.canCheckTasks()) return;
+        if (this.checking) {
+            this.logger.info('TaskPlugin', '任务检查跳过：上一次检查尚未结束');
+            return;
+        }
+        if (!this.engine.state.config.auto_task) {
+            this.logger.info('TaskPlugin', '任务检查跳过：auto_task 未开启');
+            return;
+        }
+        if (!force && !this.canCheckTasks()) {
+            this.logger.info('TaskPlugin', '任务检查跳过：仍在冷却中');
+            return;
+        }
 
         this.checking = true;
         try {
@@ -97,7 +107,7 @@ class TaskPlugin extends BasePlugin {
             const reply = types.TaskInfoReply.decode(replyBody);
 
             if (!reply.task_info) {
-                this.checking = false;
+                this.logger.warn('TaskPlugin', '任务检查失败：服务端未返回 task_info');
                 return;
             }
 
@@ -117,6 +127,8 @@ class TaskPlugin extends BasePlugin {
                 for (const task of claimable) {
                     await this.doClaim(task);
                 }
+            } else {
+                this.logger.info('TaskPlugin', '任务检查结果：当前无可领取普通任务');
             }
 
             // 3. 领取活跃度宝箱
@@ -156,6 +168,7 @@ class TaskPlugin extends BasePlugin {
             await sleep(300);
             return true;
         } catch {
+            this.logger.warn('TaskPlugin', `领取任务失败(taskId=${task.id}, desc=${task.desc || ''})`);
             return false;
         }
     }
@@ -189,7 +202,10 @@ class TaskPlugin extends BasePlugin {
     }
 
     async checkAndClaimIllustratedRewards() {
-        if (!types.ClaimAllRewardsV2Request) return false;
+        if (!types.ClaimAllRewardsV2Request) {
+            this.logger.info('TaskPlugin', '图鉴奖励跳过：协议未注册 ClaimAllRewardsV2Request');
+            return false;
+        }
         try {
             const body = types.ClaimAllRewardsV2Request.encode(types.ClaimAllRewardsV2Request.create({
                 only_claimable: true,
@@ -208,8 +224,10 @@ class TaskPlugin extends BasePlugin {
                 this.taskClaimDoneDateKey = this.getDateKey();
                 return true;
             }
+            this.logger.info('TaskPlugin', '图鉴奖励检查：当前无可领取奖励');
             return false;
-        } catch {
+        } catch (e) {
+            this.logger.warn('TaskPlugin', `图鉴奖励领取失败: ${e.message}`);
             return false;
         }
     }

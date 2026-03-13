@@ -137,3 +137,7 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+DEVELOPMENT_TASKS.md
+FARM_PLUGIN_TODO.md
+HOT_RELOAD_FIX_TODO.md

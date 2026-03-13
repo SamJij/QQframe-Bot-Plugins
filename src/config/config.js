@@ -12,11 +12,13 @@ const CONFIG = {
     farmCheckInterval: 2000,      // 兼容旧逻辑：自己农场固定巡查间隔(ms)
     friendCheckInterval: 10000,   // 兼容旧逻辑：好友固定巡查间隔(ms)
     farmCheckIntervalMin: 2000,   // 新逻辑：农场巡查间隔最小值(ms)
-    farmCheckIntervalMax: 2000,   // 新逻辑：农场巡查间隔最大值(ms)
+    farmCheckIntervalMax: 20000,   // 新逻辑：农场巡查间隔最大值(ms)
     friendCheckIntervalMin: 10000,// 新逻辑：好友巡查间隔最小值(ms)
-    friendCheckIntervalMax: 10000,// 新逻辑：好友巡查间隔最大值(ms)
+    friendCheckIntervalMax: 20000,// 新逻辑：好友巡查间隔最大值(ms)
     adminPort: Number(process.env.ADMIN_PORT || 3000), // 管理面板 HTTP 端口
     adminPassword: process.env.ADMIN_PASSWORD || 'admin',
+    adminAuthRequired: process.env.ADMIN_AUTH_REQUIRED !== 'false',
+    adminTokenTtlSec: Number(process.env.ADMIN_TOKEN_TTL_SEC || (12 * 60 * 60)),
     device_info: {
         client_version: "1.7.0.5_202600306",
         sys_software: 'iOS 26.2.1',

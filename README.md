@@ -60,20 +60,16 @@ npm install
 
 ### 2. 配置账号并启动
 
-打开 `src/index.js`，修改你的真实抓包 `code`：
+先确保 `data/accounts.json` 中账号是启用状态，然后在对应账号配置文件里填写抓包 `code`。
+以 `acc_001` 为例，填写 `data/config_acc_001.json`：
 
-```javascript
-const engine = new BotEngine({
-    accountId: 'acc_001',
-    mockNetwork: false, // 是否使用真实的腾讯服务器
-    config: {
-        code: '你的抓包真实_code_填写在这里', 
-        auto_farm: true,
-        auto_friend_steal: true,
-        auto_task: true,
-        // ...其他开关
-    }
-});
+```json
+{
+  "code": "你的抓包真实_code_填写在这里",
+  "auto_farm": true,
+  "auto_friend_steal": true,
+  "auto_task": true
+}
 ```
 
 然后运行：
@@ -82,7 +78,7 @@ const engine = new BotEngine({
 node src/index.js
 ```
 
-启动成功后，管理面板 API 默认监听在 `http://localhost:8888`。
+启动成功后，管理面板 API 默认监听在 `http://localhost:3000`（可通过 `ADMIN_PORT` 调整）。
 
 ---
 
@@ -110,7 +106,7 @@ if (wasEnabled) this.disable(pluginName);
 **2. 暴力抹除内存缓存 (Cache Busting)**
 
 ```javascript
-const absolutePath = require.resolve(pluginPath);
+const absolutePath = this.resolveReloadPluginPath(pluginPath);
 delete require.cache[absolutePath]; // 从 Node 缓存中抹除文件
 this.plugins.delete(pluginName);    // 从插件字典中移除旧实例
 ```
@@ -137,9 +133,9 @@ if (wasEnabled) {
 在保持 Bot 运行的情况下，修改并保存了插件代码。直接向管理服务器发送 POST 请求：
 
 ```bash
-curl -X POST http://localhost:8888/api/accounts/acc_001/reload \
+curl -X POST http://localhost:3000/api/accounts/acc_001/reload \
 -H "Content-Type: application/json" \
--d '{"pluginPath": "../plugins/gameplay/farm-plugin"}'
+-d '{"pluginPath": "src/plugins/gameplay/farm-plugin.js"}'
 ```
 
 即可享受丝滑的热重载体验！

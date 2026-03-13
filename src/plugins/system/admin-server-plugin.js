@@ -34,6 +34,7 @@ class AdminServerPlugin extends BasePlugin {
             this.server = null;
         }
         this.logger.info('AdminServerPlugin', '本地管理面板服务已停止');
+        super.onDisable();
     }
 
     startServer() {
@@ -88,12 +89,21 @@ class AdminServerPlugin extends BasePlugin {
         // 3. 控制插件启停 (热操作)
         this.app.post('/api/plugins/toggle', (req, res) => {
             const { name, enable } = req.body;
-            if (enable) {
-                this.engine.pluginManager.enable(name);
-            } else {
-                this.engine.pluginManager.disable(name);
+            if (!name) {
+                return res.status(400).json({ success: false, message: '未提供插件名称' });
             }
-            res.json({ success: true });
+
+            let ok = false;
+            if (enable) {
+                ok = this.engine.pluginManager.enable(name) === true;
+            } else {
+                ok = this.engine.pluginManager.disable(name) === true;
+            }
+
+            if (!ok) {
+                return res.status(500).json({ success: false, message: `插件 ${enable ? '启用' : '禁用'}失败` });
+            }
+            return res.json({ success: true, message: `插件已${enable ? '启用' : '禁用'}` });
         });
     }
 
