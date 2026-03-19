@@ -1,9 +1,11 @@
 # QQFrame Bot (插件化 QQ 农场自动挂机引擎)
 
+## 账号毕业开发终止
 QQFrame Bot 是一个为 QQ 农场（微信同玩版）量身打造的全自动挂机机器人。
 通过采用现代化的 **事件驱动 (Event-Driven)** 和 **插件化 (Plugin-based)** 架构，项目拥有极高的稳定性、扩展性和极低的耦合度。它支持多账号并发，支持在不掉线的情况下进行核心代码的 **热重载 (Hot Reloading)**。
 
 此项目是为了开发个人插件提供思路，如小白请去P佬与群友维护的[qq-farm-bot-ui](https://github.com/Penty-d/qq-farm-bot-ui)，本项目实现代码都是来源此库
+
 
 ---
 
